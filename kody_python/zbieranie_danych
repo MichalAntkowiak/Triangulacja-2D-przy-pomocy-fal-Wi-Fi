@@ -1,0 +1,90 @@
+import serial
+import csv
+import time
+import os
+
+SERIAL_PORT = 'COM9'
+BAUD_RATE = 115200
+OUTPUT_FILE = "csi_multi_tx_regression.csv"
+MAC_ADDRESSES = ['30:30:F9:19:B1:68', '30:30:F9:5A:07:E0', '84:FC:E6:67:93:E0']
+EXPECTED_FEATURES_PER_TX = 64
+
+# Przed uruchomieniem pomiaru w danym punkcie wpisz jego współrzędne:
+CURRENT_X = 1.0  # pozycja X w metrach
+CURRENT_Y = 2.0  # pozycja Y w metrach
+
+current_data = {mac: None for mac in MAC_ADDRESSES}
+file_exists = os.path.exists(OUTPUT_FILE)
+
+# Tworzenie nagłówków kolumn (192 podnośne + X + Y)
+headers = []
+for mac in MAC_ADDRESSES:
+    mac_clean = mac.replace(":", "")
+    for i in range(EXPECTED_FEATURES_PER_TX):
+        headers.append(f"sub_{mac_clean}_{i}")
+headers.extend(["X", "Y"])
+
+try:
+    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0)
+    ser.dtr = True
+    ser.rts = True
+    ser.flushInput()
+    print(f"Połączono z {SERIAL_PORT}. Rozpoczęto zbieranie danych dla punktu ({CURRENT_X}, {CURRENT_Y}).")
+except Exception as e:
+    print(f"Błąd portu COM: {e}")
+    exit()
+
+serial_buffer = ""
+samples_saved = 0
+
+with open(OUTPUT_FILE, mode='a', newline='') as f:
+    writer = csv.writer(f)
+    if not file_exists:
+        writer.writerow(headers)
+
+    try:
+        while True:
+            waiting_bytes = ser.in_waiting
+            if waiting_bytes > 0:
+                raw_data = ser.read(waiting_bytes)
+                serial_buffer += raw_data.decode('utf-8', errors='ignore')
+                
+                if '\n' in serial_buffer:
+                    lines = serial_buffer.split('\n')
+                    serial_buffer = lines[-1]
+                    
+                    for line in lines[:-1]:
+                        line = line.strip()
+                        if line.startswith("CSI,"):
+                            parts = line.split(',')
+                            if len(parts) > 3:
+                                mac = parts[1].strip()
+                                if mac in current_data:
+                                    try:
+                                        subcarriers = [float(x) for x in parts[2:]]
+                                        if len(subcarriers) == EXPECTED_FEATURES_PER_TX:
+                                            current_data[mac] = subcarriers
+                                    except ValueError:
+                                        continue
+
+            # Jeśli mamy komplet danych ze wszystkich 3 nadajników, zapisujemy wiersz
+            if all(v is not None for v in current_data.values()):
+                row = []
+                for mac in MAC_ADDRESSES:
+                    row.extend(current_data[mac])
+                row.extend([CURRENT_X, CURRENT_Y])
+                
+                writer.writerow(row)
+                f.flush()
+                samples_saved += 1
+                print(f"Zapisano próbek: {samples_saved}", end="\r")
+                
+                # Reset bufora na kolejny cykl pomiarowy
+                current_data = {mac: None for mac in MAC_ADDRESSES}
+                
+            time.sleep(0.001)
+
+    except KeyboardInterrupt:
+        print(f"\nZakończono sesję pomiarową. Zapisano łącznie {samples_saved} rekordów.")
+    finally:
+        ser.close()
