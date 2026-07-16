@@ -1,0 +1,64 @@
+#include <WiFi.h>
+#include <esp_wifi.h>
+
+// Funkcja zwrotna wywoływana przy każdym odebranym pakiecie radiowym
+void csi_rx_callback(void *ctx, wifi_csi_info_t *data) {
+  // Sprawdzenie poprawności struktury danych i długości bufora (min. 64 podnośne)
+  if (data == NULL || data->buf == NULL || data->len < 128) {
+    return;
+  }
+
+  // Formatowanie adresu MAC nadawcy do postaci tekstowej
+  char mac_str[18];
+  snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+           data->mac[0], data->mac[1], data->mac[2], data->mac[3], data->mac[4], data->mac[5]);
+
+  // Transmisja danych do komputera w formacie oczekiwanym przez Pythona
+  Serial.print("CSI,");
+  Serial.print(mac_str);
+  
+  int8_t *csi_buf = (int8_t *)data->buf;
+  for (int i = 0; i < 64; i++) {
+    // Obliczanie amplitudy podnośnej: pierwiastek z sumy kwadratów części rzeczywistej (I) i urojonej (Q)
+    float real = (float)csi_buf[i * 2];
+    float imag = (float)csi_buf[i * 2 + 1];
+    float amplitude = sqrt(real * real + imag * imag);
+    
+    Serial.print(",");
+    Serial.print(amplitude, 2);
+  }
+  Serial.println();
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  
+  // Uruchomienie trybu promiscuous oraz wymuszenie pracy na kanale 1
+  esp_wifi_start();
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+
+  // Konfiguracja modułu ekstrakcji CSI dla standardu HT20 (20 MHz)
+  wifi_csi_config_t csi_config;
+  csi_config.enable = true;
+  csi_config.acquire_csi_legacy = true;
+  csi_config.acquire_csi_ht20 = true;
+  csi_config.acquire_csi_ht40 = false;
+  csi_config.acquire_csi_su = false;
+  csi_config.acquire_csi_mu = false;
+  csi_config.acquire_csi_dcm = false;
+  csi_config.acquire_csi_beamformed = false;
+  csi_config.acquire_csi_force_lltf = false;
+  
+  esp_wifi_set_csi_config(&csi_config);
+  esp_wifi_set_csi_rx_cb(&csi_rx_callback, NULL);
+  esp_wifi_set_csi(true);
+}
+
+void loop() {
+  // Proces pomiarowy i komunikacja szeregowa odbywają się asynchronicznie w tle
+  delay(1000);
+}
