@@ -1,0 +1,39 @@
+import pandas as pd
+import numpy as np
+from sklearn.neighbors import KNeighborsRegressor
+import pickle
+import os
+
+DATA_FILE = "csi_multi_tx_regression.csv"
+MODEL_FILE = "csi_multi_tx_model.pkl"
+
+if not os.path.exists(DATA_FILE):
+    print(f"Błąd: Nie znaleziono pliku bazy danych '{DATA_FILE}'!")
+    print("Upewnij się, że plik CSV znajduje się w tym samym folderze co ten skrypt.")
+    exit()
+
+print("Wczytywanie bazy danych...")
+df = pd.read_csv(DATA_FILE)
+
+# Zakładamy, że ostatnie dwie kolumny w pliku to targety X i Y, a reszta to dane wejściowe CSI
+X_raw = df.iloc[:, :-2].values
+y = df.iloc[:, -2:].values
+
+print(f"Załadowano pomyślnie {len(df)} próbek danych.")
+print("Rozpoczynanie normalizacji L2...")
+
+# Normalizacja wektora cech (dokładnie tak jak w programie live)
+norms = np.linalg.norm(X_raw, axis=1, keepdims=True)
+norms[norms == 0] = 1e-9  # Zabezpieczenie przed dzieleniem przez zero
+X_normalized = X_raw / norms
+
+print("Trenowanie modelu KNN z wagami dystansowymi...")
+# 15 sąsiadów z wagami zależnymi od odległości euklidesowej
+model = KNeighborsRegressor(n_neighbors=15, weights='distance', metric='euclidean')
+model.fit(X_normalized, y)
+
+print("Zapisywanie modelu do pliku .pkl...")
+with open(MODEL_FILE, 'wb') as f:
+    pickle.dump(model, f)
+
+print(f"Sukces. Plik '{MODEL_FILE}' został wygenerowany i jest gotowy do użycia.")
